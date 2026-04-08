@@ -434,6 +434,7 @@ def main() -> int:
     configured_models = [m.strip() for m in gemini_models_env.split(",") if m.strip()]
     max_news = int(getenv_with_default("MAX_NEWS", "10"))
     max_sports = int(getenv_with_default("MAX_SPORTS", "10"))
+    max_ent = int(getenv_with_default("MAX_ENTERTAINMENT", "10"))
     rss_feeds_env = getenv_with_default(
         "RSS_FEEDS",
         "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
@@ -442,8 +443,13 @@ def main() -> int:
         "SPORTS_RSS_FEEDS",
         "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=ko&gl=KR&ceid=KR:ko",
     )
+    ent_rss_feeds_env = getenv_with_default(
+        "ENTERTAINMENT_RSS_FEEDS",
+        "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=ko&gl=KR&ceid=KR:ko",
+    )
     rss_feeds = [x.strip() for x in rss_feeds_env.split(",") if x.strip()]
     sports_rss_feeds = [x.strip() for x in sports_rss_feeds_env.split(",") if x.strip()]
+    ent_rss_feeds = [x.strip() for x in ent_rss_feeds_env.split(",") if x.strip()]
 
     collected: List[NewsItem] = []
     for feed in rss_feeds:
@@ -462,8 +468,16 @@ def main() -> int:
         except Exception as e:
             print(f"[WARN] failed sports feed {feed}: {e}", file=sys.stderr)
 
+    ent_collected: List[NewsItem] = []
+    for feed in ent_rss_feeds:
+        try:
+            ent_collected.extend(parse_rss_feed(feed, max_items=40))
+        except Exception as e:
+            print(f"[WARN] failed entertainment feed {feed}: {e}", file=sys.stderr)
+
     selected = unique_latest(collected, limit=max_news)
     sports_selected = unique_latest(sports_collected, limit=max_sports)
+    ent_selected = unique_latest(ent_collected, limit=max_ent)
     date_str = datetime.now(KST).strftime("%Y-%m-%d")
 
     try:
@@ -478,6 +492,11 @@ def main() -> int:
             if sports_selected
             else "No sports news collected."
         )
+        ent_summary_text = (
+            summarize_items_individually(gemini_api_key, model_candidates, ent_selected, date_str)
+            if ent_selected
+            else "No entertainment news collected."
+        )
     except Exception as e:
         print(f"[WARN] Gemini summarize failed: {e}", file=sys.stderr)
         general_summary_text = format_fallback(selected, date_str, reason=str(e))
@@ -486,18 +505,26 @@ def main() -> int:
             if sports_selected
             else "No sports news collected."
         )
+        ent_summary_text = (
+            format_fallback(ent_selected, date_str, reason=str(e))
+            if ent_selected
+            else "No entertainment news collected."
+        )
 
     header = (
         f"[{date_str}] Daily news summary\n"
         f"- General: {len(selected)} items\n"
         f"- Sports: {len(sports_selected)} items\n"
+        f"- Entertainment/Broadcast: {len(ent_selected)} items\n"
     )
     final_text = (
         f"{header}\n"
         "[GENERAL NEWS]\n"
         f"{general_summary_text}\n\n"
         "[SPORTS NEWS]\n"
-        f"{sports_summary_text}"
+        f"{sports_summary_text}\n\n"
+        "[ENTERTAINMENT/BROADCAST NEWS]\n"
+        f"{ent_summary_text}"
     ).strip()
 
     for chat_id in telegram_chat_ids:
