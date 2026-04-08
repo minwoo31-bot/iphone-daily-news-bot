@@ -413,9 +413,18 @@ def telegram_send(token: str, chat_id: str, text: str) -> None:
     _ = http_post_json(endpoint, payload, timeout=20)
 
 
+def parse_chat_ids() -> List[str]:
+    ids_env = os.getenv("TELEGRAM_CHAT_IDS", "").strip()
+    if ids_env:
+        ids = [x.strip() for x in ids_env.split(",") if x.strip()]
+        if ids:
+            return ids
+    return [getenv_required("TELEGRAM_CHAT_ID")]
+
+
 def main() -> int:
     telegram_bot_token = getenv_required("TELEGRAM_BOT_TOKEN")
-    telegram_chat_id = getenv_required("TELEGRAM_CHAT_ID")
+    telegram_chat_ids = parse_chat_ids()
     gemini_api_key = getenv_required("GEMINI_API_KEY")
 
     gemini_models_env = getenv_with_default(
@@ -459,9 +468,10 @@ def main() -> int:
     header = f"[{date_str}] Daily news summary ({len(selected)} items)\n"
     final_text = f"{header}\n{summary_text}".strip()
 
-    for part in chunk_text(final_text, max_len=3500):
-        telegram_send(telegram_bot_token, telegram_chat_id, part)
-        time.sleep(0.5)
+    for chat_id in telegram_chat_ids:
+        for part in chunk_text(final_text, max_len=3500):
+            telegram_send(telegram_bot_token, chat_id, part)
+            time.sleep(0.5)
 
     print("Done: sent daily news digest.")
     return 0
