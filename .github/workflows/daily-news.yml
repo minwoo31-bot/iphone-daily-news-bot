@@ -4,6 +4,10 @@ on:
   schedule:
     # 07:30 KST = 22:30 UTC (previous day)
     - cron: "30 22 * * *"
+    # 11:30 KST = 02:30 UTC
+    - cron: "30 2 * * *"
+    # 18:00 KST = 09:00 UTC
+    - cron: "0 9 * * *"
   workflow_dispatch:
 
 env:
