@@ -23,7 +23,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Set
 
 
 KST = timezone(timedelta(hours=9))
@@ -173,6 +173,9 @@ def build_prompt(items: List[NewsItem], date_str: str) -> str:
 
 
 def summarize_with_gemini(api_key: str, prompt: str, model: str) -> str:
+    model = model.strip()
+    if model.startswith("models/"):
+        model = model.split("/", 1)[1]
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
         f"{urllib.parse.quote(model)}:generateContent?key={urllib.parse.quote(api_key)}"
@@ -194,6 +197,45 @@ def summarize_with_gemini(api_key: str, prompt: str, model: str) -> str:
     if not text:
         raise RuntimeError(f"Gemini returned empty text: {data}")
     return text
+
+
+def list_gemini_models(api_key: str) -> List[str]:
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models"
+        f"?key={urllib.parse.quote(api_key)}"
+    )
+    raw = http_get(url, timeout=20)
+    data = json.loads(raw.decode("utf-8"))
+    models = []
+    for m in data.get("models", []):
+        methods = m.get("supportedGenerationMethods", [])
+        if "generateContent" in methods:
+            name = str(m.get("name", "")).strip()
+            if name.startswith("models/"):
+                name = name.split("/", 1)[1]
+            if name:
+                models.append(name)
+    return models
+
+
+def build_model_candidates(configured: List[str], available: List[str]) -> List[str]:
+    candidates: List[str] = []
+    seen: Set[str] = set()
+
+    def add(model: str) -> None:
+        key = model.strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            candidates.append(model.strip())
+
+    for m in configured:
+        add(m)
+    for m in available:
+        if "flash" in m.lower():
+            add(m)
+    for m in available:
+        add(m)
+    return candidates
 
 
 def summarize_with_gemini_any_model(api_key: str, prompt: str, models: List[str]) -> str:
@@ -258,7 +300,7 @@ def main() -> int:
         "GEMINI_MODELS",
         getenv_with_default("GEMINI_MODEL", "gemini-2.0-flash,gemini-1.5-flash"),
     )
-    gemini_models = [m.strip() for m in gemini_models_env.split(",") if m.strip()]
+    configured_models = [m.strip() for m in gemini_models_env.split(",") if m.strip()]
     max_news = int(getenv_with_default("MAX_NEWS", "10"))
     rss_feeds_env = getenv_with_default(
         "RSS_FEEDS",
@@ -281,7 +323,10 @@ def main() -> int:
     prompt = build_prompt(selected, date_str)
 
     try:
-        summary_text = summarize_with_gemini_any_model(gemini_api_key, prompt, gemini_models)
+        available_models = list_gemini_models(gemini_api_key)
+        model_candidates = build_model_candidates(configured_models, available_models)
+        print(f"[INFO] Gemini model candidates: {', '.join(model_candidates[:8])}", file=sys.stderr)
+        summary_text = summarize_with_gemini_any_model(gemini_api_key, prompt, model_candidates)
     except Exception as e:
         print(f"[WARN] Gemini summarize failed: {e}", file=sys.stderr)
         summary_text = format_fallback(selected, date_str, reason=str(e))
