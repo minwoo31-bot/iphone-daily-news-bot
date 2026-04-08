@@ -43,6 +43,11 @@ def getenv_required(name: str) -> str:
     return value
 
 
+def getenv_with_default(name: str, default: str) -> str:
+    value = os.getenv(name, "").strip()
+    return value if value else default
+
+
 def http_get(url: str, timeout: int = 20) -> bytes:
     req = urllib.request.Request(
         url,
@@ -225,9 +230,9 @@ def main() -> int:
     telegram_chat_id = getenv_required("TELEGRAM_CHAT_ID")
     gemini_api_key = getenv_required("GEMINI_API_KEY")
 
-    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-    max_news = int(os.getenv("MAX_NEWS", "10"))
-    rss_feeds_env = os.getenv(
+    gemini_model = getenv_with_default("GEMINI_MODEL", "gemini-2.0-flash")
+    max_news = int(getenv_with_default("MAX_NEWS", "10"))
+    rss_feeds_env = getenv_with_default(
         "RSS_FEEDS",
         "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
     )
