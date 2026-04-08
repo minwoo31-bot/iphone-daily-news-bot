@@ -433,11 +433,17 @@ def main() -> int:
     )
     configured_models = [m.strip() for m in gemini_models_env.split(",") if m.strip()]
     max_news = int(getenv_with_default("MAX_NEWS", "10"))
+    max_sports = int(getenv_with_default("MAX_SPORTS", "10"))
     rss_feeds_env = getenv_with_default(
         "RSS_FEEDS",
         "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
     )
+    sports_rss_feeds_env = getenv_with_default(
+        "SPORTS_RSS_FEEDS",
+        "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=ko&gl=KR&ceid=KR:ko",
+    )
     rss_feeds = [x.strip() for x in rss_feeds_env.split(",") if x.strip()]
+    sports_rss_feeds = [x.strip() for x in sports_rss_feeds_env.split(",") if x.strip()]
 
     collected: List[NewsItem] = []
     for feed in rss_feeds:
@@ -449,24 +455,50 @@ def main() -> int:
     if not collected:
         raise RuntimeError("No news collected from RSS feeds.")
 
+    sports_collected: List[NewsItem] = []
+    for feed in sports_rss_feeds:
+        try:
+            sports_collected.extend(parse_rss_feed(feed, max_items=40))
+        except Exception as e:
+            print(f"[WARN] failed sports feed {feed}: {e}", file=sys.stderr)
+
     selected = unique_latest(collected, limit=max_news)
+    sports_selected = unique_latest(sports_collected, limit=max_sports)
     date_str = datetime.now(KST).strftime("%Y-%m-%d")
-    prompt = build_prompt(selected, date_str)
 
     try:
         available_models = list_gemini_models(gemini_api_key)
         model_candidates = build_model_candidates(configured_models, available_models)
         print(f"[INFO] Gemini model candidates: {', '.join(model_candidates[:8])}", file=sys.stderr)
-        # Summarize each article separately so output always contains all selected items.
-        summary_text = summarize_items_individually(
+        general_summary_text = summarize_items_individually(
             gemini_api_key, model_candidates, selected, date_str
+        )
+        sports_summary_text = (
+            summarize_items_individually(gemini_api_key, model_candidates, sports_selected, date_str)
+            if sports_selected
+            else "No sports news collected."
         )
     except Exception as e:
         print(f"[WARN] Gemini summarize failed: {e}", file=sys.stderr)
-        summary_text = format_fallback(selected, date_str, reason=str(e))
+        general_summary_text = format_fallback(selected, date_str, reason=str(e))
+        sports_summary_text = (
+            format_fallback(sports_selected, date_str, reason=str(e))
+            if sports_selected
+            else "No sports news collected."
+        )
 
-    header = f"[{date_str}] Daily news summary ({len(selected)} items)\n"
-    final_text = f"{header}\n{summary_text}".strip()
+    header = (
+        f"[{date_str}] Daily news summary\n"
+        f"- General: {len(selected)} items\n"
+        f"- Sports: {len(sports_selected)} items\n"
+    )
+    final_text = (
+        f"{header}\n"
+        "[GENERAL NEWS]\n"
+        f"{general_summary_text}\n\n"
+        "[SPORTS NEWS]\n"
+        f"{sports_summary_text}"
+    ).strip()
 
     for chat_id in telegram_chat_ids:
         for part in chunk_text(final_text, max_len=3500):
