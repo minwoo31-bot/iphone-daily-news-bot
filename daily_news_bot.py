@@ -103,6 +103,22 @@ def normalize_link(link: str) -> str:
     return urllib.parse.urlunparse(parsed)
 
 
+def shorten_link(link: str) -> str:
+    encoded = urllib.parse.quote(link, safe="")
+    providers = [
+        f"https://is.gd/create.php?format=simple&url={encoded}",
+        f"https://tinyurl.com/api-create.php?url={encoded}",
+    ]
+    for url in providers:
+        try:
+            short = http_get(url, timeout=10).decode("utf-8", errors="replace").strip()
+            if short.startswith("http://") or short.startswith("https://"):
+                return short
+        except Exception:
+            continue
+    return link
+
+
 def parse_rss_feed(feed_url: str, max_items: int = 30) -> List[NewsItem]:
     raw = http_get(feed_url)
     root = ET.fromstring(raw)
@@ -332,6 +348,7 @@ def summarize_items_individually(
     api_key: str, models: List[str], items: List[NewsItem], date_str: str
 ) -> str:
     lines: List[str] = []
+    short_cache: dict[str, str] = {}
     for i, item in enumerate(items, start=1):
         try:
             prompt = build_single_item_prompt(item, i, date_str)
@@ -349,7 +366,9 @@ def summarize_items_individually(
         lines.append(f"  1) {summary_lines[0]}")
         lines.append(f"  2) {summary_lines[1]}")
         lines.append(f"  3) {summary_lines[2]}")
-        lines.append(f"- Link: {item.link}")
+        if item.link not in short_cache:
+            short_cache[item.link] = shorten_link(item.link)
+        lines.append(f"- Link: {short_cache[item.link]}")
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -360,7 +379,7 @@ def format_fallback(items: List[NewsItem], date_str: str, reason: str = "") -> s
         lines.append(f"Reason: {reason[:200]}")
     for i, item in enumerate(items, start=1):
         lines.append(f"{i}. {item.title}")
-        lines.append(f"Link: {item.link}")
+        lines.append(f"Link: {shorten_link(item.link)}")
     return "\n".join(lines)
 
 
