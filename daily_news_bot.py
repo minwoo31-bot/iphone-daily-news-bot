@@ -350,8 +350,6 @@ def summarize_items_individually(
         lines.append(f"  2) {summary_lines[1]}")
         lines.append(f"  3) {summary_lines[2]}")
         lines.append(f"- Link: {item.link}")
-        if item.source:
-            lines.append(f"- Source: {item.source}")
         lines.append("")
     return "\n".join(lines).strip()
 
