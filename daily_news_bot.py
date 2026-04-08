@@ -172,6 +172,26 @@ def build_prompt(items: List[NewsItem], date_str: str) -> str:
     return "\n".join(lines)
 
 
+def build_single_item_prompt(item: NewsItem, index: int, date_str: str) -> str:
+    return "\n".join(
+        [
+            f"Today is {date_str}.",
+            "Summarize this single news item in Korean.",
+            "Write exactly 3 concise Korean lines.",
+            "No speculation. Use the provided title/link/source only.",
+            "Each line should be one sentence.",
+            "Do not include numbering or bullet symbols.",
+            "",
+            f"Index: {index}",
+            f"Title: {item.title}",
+            f"Link: {item.link}",
+            f"Source: {item.source}",
+            "",
+            "Output only the 3 summary lines.",
+        ]
+    )
+
+
 def summarize_with_gemini(api_key: str, prompt: str, model: str) -> str:
     model = model.strip()
     if model.startswith("models/"):
@@ -267,6 +287,57 @@ def summarize_with_gemini_any_model(api_key: str, prompt: str, models: List[str]
     raise RuntimeError("No Gemini model available.")
 
 
+def force_three_lines(text: str) -> List[str]:
+    raw_lines = [ln.strip(" -\t") for ln in text.splitlines() if ln.strip()]
+    if len(raw_lines) >= 3:
+        return raw_lines[:3]
+
+    merged = " ".join(raw_lines).strip()
+    if not merged:
+        return ["요약을 생성하지 못했습니다.", "기사 링크를 확인해 주세요.", "다음 기사로 넘어갑니다."]
+
+    chunks = [c.strip() for c in re.split(r"(?<=[.!?])\s+|(?<=[다요])\s+", merged) if c.strip()]
+    lines: List[str] = []
+    for c in chunks:
+        if len(lines) >= 3:
+            break
+        lines.append(c)
+
+    if not lines:
+        lines = [merged]
+    while len(lines) < 3:
+        lines.append("관련 내용을 링크에서 확인해 주세요.")
+    return lines[:3]
+
+
+def summarize_items_individually(
+    api_key: str, models: List[str], items: List[NewsItem], date_str: str
+) -> str:
+    lines: List[str] = []
+    for i, item in enumerate(items, start=1):
+        try:
+            prompt = build_single_item_prompt(item, i, date_str)
+            summary = summarize_with_gemini_any_model(api_key, prompt, models)
+            summary_lines = force_three_lines(summary)
+        except Exception as e:
+            print(f"[WARN] item summarize failed ({i}): {e}", file=sys.stderr)
+            summary_lines = [
+                "요약 생성에 실패했습니다.",
+                "아래 링크에서 원문을 확인해 주세요.",
+                "다음 기사부터는 정상 요약을 시도합니다.",
+            ]
+        lines.append(f"{i}. [{item.title}]")
+        lines.append("- Summary:")
+        lines.append(f"  1) {summary_lines[0]}")
+        lines.append(f"  2) {summary_lines[1]}")
+        lines.append(f"  3) {summary_lines[2]}")
+        lines.append(f"- Link: {item.link}")
+        if item.source:
+            lines.append(f"- Source: {item.source}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
 def format_fallback(items: List[NewsItem], date_str: str, reason: str = "") -> str:
     lines = [f"[{date_str}] Today news 10 (summary failed, links only)"]
     if reason:
@@ -342,7 +413,10 @@ def main() -> int:
         available_models = list_gemini_models(gemini_api_key)
         model_candidates = build_model_candidates(configured_models, available_models)
         print(f"[INFO] Gemini model candidates: {', '.join(model_candidates[:8])}", file=sys.stderr)
-        summary_text = summarize_with_gemini_any_model(gemini_api_key, prompt, model_candidates)
+        # Summarize each article separately so output always contains all selected items.
+        summary_text = summarize_items_individually(
+            gemini_api_key, model_candidates, selected, date_str
+        )
     except Exception as e:
         print(f"[WARN] Gemini summarize failed: {e}", file=sys.stderr)
         summary_text = format_fallback(selected, date_str, reason=str(e))
