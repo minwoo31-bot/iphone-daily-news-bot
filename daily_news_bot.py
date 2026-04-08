@@ -181,6 +181,9 @@ def build_single_item_prompt(item: NewsItem, index: int, date_str: str) -> str:
             "No speculation. Use the provided title/link/source only.",
             "Each line should be one sentence.",
             "Do not include numbering or bullet symbols.",
+            "Focus only on the most important facts, changes, impacts, and numbers.",
+            "Do not mention who announced/reported it or where it was reported.",
+            "Avoid expressions like 발표했다, 보도했다, 전했다, 밝혔다.",
             "",
             f"Index: {index}",
             f"Title: {item.title}",
@@ -305,6 +308,21 @@ def force_three_lines(text: str) -> List[str]:
 
     if not lines:
         lines = [merged]
+    # Drop low-signal reporting verbs if they leaked into output.
+    banned_patterns = [
+        r"\b(발표했다|보도했다|전했다|밝혔다)\b",
+        r"(에 따르면|에 의하면)",
+    ]
+    cleaned: List[str] = []
+    for ln in lines:
+        t = ln
+        for p in banned_patterns:
+            t = re.sub(p, "", t).strip()
+        t = re.sub(r"\s+", " ", t).strip(" ,.;")
+        if t:
+            cleaned.append(t)
+    lines = cleaned if cleaned else lines
+
     while len(lines) < 3:
         lines.append("관련 내용을 링크에서 확인해 주세요.")
     return lines[:3]
