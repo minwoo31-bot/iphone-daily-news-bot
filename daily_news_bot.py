@@ -176,10 +176,6 @@ def summarize_with_gemini(api_key: str, prompt: str, model: str) -> str:
     model = model.strip()
     if model.startswith("models/"):
         model = model.split("/", 1)[1]
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{urllib.parse.quote(model)}:generateContent?key={urllib.parse.quote(api_key)}"
-    )
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -188,34 +184,52 @@ def summarize_with_gemini(api_key: str, prompt: str, model: str) -> str:
             "maxOutputTokens": 2048,
         },
     }
-    data = http_post_json(url, body, timeout=40)
-    candidates = data.get("candidates") or []
-    if not candidates:
-        raise RuntimeError(f"No Gemini candidates returned: {data}")
-    parts = candidates[0].get("content", {}).get("parts", [])
-    text = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
-    if not text:
-        raise RuntimeError(f"Gemini returned empty text: {data}")
-    return text
+    last_error: Optional[Exception] = None
+    for api_ver in ("v1beta", "v1"):
+        url = (
+            f"https://generativelanguage.googleapis.com/{api_ver}/models/"
+            f"{urllib.parse.quote(model)}:generateContent?key={urllib.parse.quote(api_key)}"
+        )
+        try:
+            data = http_post_json(url, body, timeout=40)
+            candidates = data.get("candidates") or []
+            if not candidates:
+                raise RuntimeError(f"No Gemini candidates returned: {data}")
+            parts = candidates[0].get("content", {}).get("parts", [])
+            text = "".join(
+                part.get("text", "") for part in parts if isinstance(part, dict)
+            ).strip()
+            if not text:
+                raise RuntimeError(f"Gemini returned empty text: {data}")
+            return text
+        except Exception as e:
+            last_error = e
+    raise RuntimeError(f"Gemini generateContent failed for model={model}: {last_error}")
 
 
 def list_gemini_models(api_key: str) -> List[str]:
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models"
-        f"?key={urllib.parse.quote(api_key)}"
-    )
-    raw = http_get(url, timeout=20)
-    data = json.loads(raw.decode("utf-8"))
-    models = []
-    for m in data.get("models", []):
-        methods = m.get("supportedGenerationMethods", [])
-        if "generateContent" in methods:
-            name = str(m.get("name", "")).strip()
-            if name.startswith("models/"):
-                name = name.split("/", 1)[1]
-            if name:
-                models.append(name)
-    return models
+    for api_ver in ("v1beta", "v1"):
+        try:
+            url = (
+                f"https://generativelanguage.googleapis.com/{api_ver}/models"
+                f"?key={urllib.parse.quote(api_key)}"
+            )
+            raw = http_get(url, timeout=20)
+            data = json.loads(raw.decode("utf-8"))
+            models = []
+            for m in data.get("models", []):
+                methods = m.get("supportedGenerationMethods", [])
+                if "generateContent" in methods:
+                    name = str(m.get("name", "")).strip()
+                    if name.startswith("models/"):
+                        name = name.split("/", 1)[1]
+                    if name:
+                        models.append(name)
+            if models:
+                return models
+        except Exception as e:
+            print(f"[WARN] list models failed ({api_ver}): {e}", file=sys.stderr)
+    return []
 
 
 def build_model_candidates(configured: List[str], available: List[str]) -> List[str]:
@@ -229,6 +243,8 @@ def build_model_candidates(configured: List[str], available: List[str]) -> List[
             candidates.append(model.strip())
 
     for m in configured:
+        add(m)
+    for m in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
         add(m)
     for m in available:
         if "flash" in m.lower():
