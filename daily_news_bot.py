@@ -17,6 +17,7 @@ import re
 import ssl
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -73,9 +74,17 @@ def http_post_json(url: str, data: dict, timeout: int = 30) -> dict:
         method="POST",
     )
     ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-        body = resp.read().decode("utf-8")
-        return json.loads(body)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            body = resp.read().decode("utf-8")
+            return json.loads(body)
+    except urllib.error.HTTPError as e:
+        err_body = ""
+        try:
+            err_body = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            err_body = str(e)
+        raise RuntimeError(f"HTTP {e.code} error from API: {err_body[:800]}") from e
 
 
 def strip_html(text: str) -> str:
@@ -142,24 +151,24 @@ def unique_latest(items: Iterable[NewsItem], limit: int) -> List[NewsItem]:
 
 def build_prompt(items: List[NewsItem], date_str: str) -> str:
     lines = [
-        f"오늘 날짜는 {date_str} 입니다.",
-        "아래 뉴스 10개를 한국어로 요약해 주세요.",
+        f"Today is {date_str}.",
+        "Please summarize the following 10 news items in Korean.",
         "",
-        "요구사항:",
-        "1) 각 뉴스는 2~3문장으로 핵심만 간결하게 요약",
-        "2) 과장/추측 금지, 제목 기반으로만 요약",
-        "3) 출력 형식:",
-        "   1. [제목]",
-        "   - 요약: ...",
-        "   - 링크: ...",
+        "Requirements:",
+        "1) For each item, write 2-3 concise Korean sentences.",
+        "2) No speculation. Use title/link context only.",
+        "3) Output format:",
+        "   1. [Title]",
+        "   - Summary: ...",
+        "   - Link: ...",
         "",
-        "뉴스 목록:",
+        "News list:",
     ]
     for idx, item in enumerate(items, start=1):
-        lines.append(f"{idx}) 제목: {item.title}")
-        lines.append(f"   링크: {item.link}")
+        lines.append(f"{idx}) Title: {item.title}")
+        lines.append(f"   Link: {item.link}")
         if item.source:
-            lines.append(f"   출처: {item.source}")
+            lines.append(f"   Source: {item.source}")
     return "\n".join(lines)
 
 
@@ -187,11 +196,26 @@ def summarize_with_gemini(api_key: str, prompt: str, model: str) -> str:
     return text
 
 
-def format_fallback(items: List[NewsItem], date_str: str) -> str:
-    lines = [f"[{date_str}] 오늘의 뉴스 10선 (요약 실패로 링크만 전송)"]
+def summarize_with_gemini_any_model(api_key: str, prompt: str, models: List[str]) -> str:
+    last_error: Optional[Exception] = None
+    for model in models:
+        try:
+            return summarize_with_gemini(api_key, prompt, model)
+        except Exception as e:
+            last_error = e
+            print(f"[WARN] Gemini model failed ({model}): {e}", file=sys.stderr)
+    if last_error:
+        raise RuntimeError(f"All Gemini models failed. Last error: {last_error}") from last_error
+    raise RuntimeError("No Gemini model available.")
+
+
+def format_fallback(items: List[NewsItem], date_str: str, reason: str = "") -> str:
+    lines = [f"[{date_str}] Today news 10 (summary failed, links only)"]
+    if reason:
+        lines.append(f"Reason: {reason[:200]}")
     for i, item in enumerate(items, start=1):
         lines.append(f"{i}. {item.title}")
-        lines.append(f"링크: {item.link}")
+        lines.append(f"Link: {item.link}")
     return "\n".join(lines)
 
 
@@ -230,7 +254,11 @@ def main() -> int:
     telegram_chat_id = getenv_required("TELEGRAM_CHAT_ID")
     gemini_api_key = getenv_required("GEMINI_API_KEY")
 
-    gemini_model = getenv_with_default("GEMINI_MODEL", "gemini-2.0-flash")
+    gemini_models_env = getenv_with_default(
+        "GEMINI_MODELS",
+        getenv_with_default("GEMINI_MODEL", "gemini-2.0-flash,gemini-1.5-flash"),
+    )
+    gemini_models = [m.strip() for m in gemini_models_env.split(",") if m.strip()]
     max_news = int(getenv_with_default("MAX_NEWS", "10"))
     rss_feeds_env = getenv_with_default(
         "RSS_FEEDS",
@@ -252,14 +280,13 @@ def main() -> int:
     date_str = datetime.now(KST).strftime("%Y-%m-%d")
     prompt = build_prompt(selected, date_str)
 
-    summary_text: Optional[str] = None
     try:
-        summary_text = summarize_with_gemini(gemini_api_key, prompt, gemini_model)
+        summary_text = summarize_with_gemini_any_model(gemini_api_key, prompt, gemini_models)
     except Exception as e:
         print(f"[WARN] Gemini summarize failed: {e}", file=sys.stderr)
-        summary_text = format_fallback(selected, date_str)
+        summary_text = format_fallback(selected, date_str, reason=str(e))
 
-    header = f"[{date_str}] 오늘의 뉴스 {len(selected)}개 요약\n"
+    header = f"[{date_str}] Daily news summary ({len(selected)} items)\n"
     final_text = f"{header}\n{summary_text}".strip()
 
     for part in chunk_text(final_text, max_len=3500):
