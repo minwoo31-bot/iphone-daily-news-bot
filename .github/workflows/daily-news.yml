@@ -2,14 +2,12 @@ name: Daily News Digest
 
 on:
   schedule:
-    # 07:30 KST = 22:30 UTC (previous day)
-    - cron: "30 22 * * *"
-    # 11:30 KST = 02:30 UTC
-    - cron: "30 2 * * *"
-    # 16:03 KST = 07:03 UTC (test)
-    - cron: "3 7 * * *"
-    # 18:00 KST = 09:00 UTC
-    - cron: "0 9 * * *"
+    # 08:03 KST = 23:03 UTC (previous day)
+    - cron: "3 23 * * *"
+    # 12:03 KST = 03:03 UTC
+    - cron: "3 3 * * *"
+    # 18:03 KST = 09:03 UTC
+    - cron: "3 9 * * *"
   workflow_dispatch:
 
 env:
