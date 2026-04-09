@@ -478,7 +478,11 @@ def main() -> int:
     selected = unique_latest(collected, limit=max_news)
     sports_selected = unique_latest(sports_collected, limit=max_sports)
     ent_selected = unique_latest(ent_collected, limit=max_ent)
-    date_str = datetime.now(KST).strftime("%Y-%m-%d")
+    now_kst = datetime.now(KST)
+    date_str = now_kst.strftime("%Y-%m-%d")
+    run_time_kst = now_kst.strftime("%Y-%m-%d %H:%M:%S KST")
+    event_name = getenv_with_default("GITHUB_EVENT_NAME", "manual")
+    trigger_name = "schedule" if event_name == "schedule" else "manual"
 
     try:
         available_models = list_gemini_models(gemini_api_key)
@@ -513,6 +517,8 @@ def main() -> int:
 
     header = (
         f"[{date_str}] Daily news summary\n"
+        f"- Run time: {run_time_kst}\n"
+        f"- Trigger: {trigger_name}\n"
         f"- General: {len(selected)} items\n"
         f"- Sports: {len(sports_selected)} items\n"
         f"- Entertainment/Broadcast: {len(ent_selected)} items\n"
