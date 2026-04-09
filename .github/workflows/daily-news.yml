@@ -6,6 +6,8 @@ on:
     - cron: "30 22 * * *"
     # 11:30 KST = 02:30 UTC
     - cron: "30 2 * * *"
+    # 14:25 KST = 05:25 UTC (test)
+    - cron: "25 5 * * *"
     # 18:00 KST = 09:00 UTC
     - cron: "0 9 * * *"
   workflow_dispatch:
