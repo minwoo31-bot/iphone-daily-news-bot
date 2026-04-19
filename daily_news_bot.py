@@ -193,20 +193,19 @@ def build_single_item_prompt(item: NewsItem, index: int, date_str: str) -> str:
         [
             f"Today is {date_str}.",
             "Summarize this single news item in Korean.",
-            "Write exactly 3 concise Korean lines.",
+            "Write exactly 1 concise Korean sentence.",
             "No speculation. Use the provided title/link/source only.",
-            "Each line should be one sentence.",
             "Do not include numbering or bullet symbols.",
             "Focus only on the most important facts, changes, impacts, and numbers.",
             "Do not mention who announced/reported it or where it was reported.",
-            "Avoid expressions like 발표했다, 보도했다, 전했다, 밝혔다.",
+            "Avoid expressions like 諛쒗몴?덈떎, 蹂대룄?덈떎, ?꾪뻽?? 諛앺삍??",
             "",
             f"Index: {index}",
             f"Title: {item.title}",
             f"Link: {item.link}",
             f"Source: {item.source}",
             "",
-            "Output only the 3 summary lines.",
+            "Output only that 1 sentence.",
         ]
     )
 
@@ -306,72 +305,32 @@ def summarize_with_gemini_any_model(api_key: str, prompt: str, models: List[str]
     raise RuntimeError("No Gemini model available.")
 
 
-def force_three_lines(text: str) -> List[str]:
+def force_single_line(text: str) -> str:
     raw_lines = [ln.strip(" -\t") for ln in text.splitlines() if ln.strip()]
-    if len(raw_lines) >= 3:
-        return raw_lines[:3]
-
     merged = " ".join(raw_lines).strip()
     if not merged:
-        return ["요약을 생성하지 못했습니다.", "기사 링크를 확인해 주세요.", "다음 기사로 넘어갑니다."]
+        return "?붿빟???앹꽦?섏? 紐삵뻽?듬땲??"
 
-    chunks = [c.strip() for c in re.split(r"(?<=[.!?])\s+|(?<=[다요])\s+", merged) if c.strip()]
-    lines: List[str] = []
-    for c in chunks:
-        if len(lines) >= 3:
-            break
-        lines.append(c)
-
-    if not lines:
-        lines = [merged]
+    chunks = [c.strip() for c in re.split(r"(?<=[.!?])\s+|(?<=[?ㅼ슂])\s+", merged) if c.strip()]
+    line = chunks[0] if chunks else merged
     # Drop low-signal reporting verbs if they leaked into output.
     banned_patterns = [
-        r"\b(발표했다|보도했다|전했다|밝혔다)\b",
-        r"(에 따르면|에 의하면)",
+        r"\b(諛쒗몴?덈떎|蹂대룄?덈떎|?꾪뻽??諛앺삍??\b",
+        r"(???곕Ⅴ硫????섑븯硫?",
     ]
-    cleaned: List[str] = []
-    for ln in lines:
-        t = ln
-        for p in banned_patterns:
-            t = re.sub(p, "", t).strip()
-        t = re.sub(r"\s+", " ", t).strip(" ,.;")
-        if t:
-            cleaned.append(t)
-    lines = cleaned if cleaned else lines
-
-    while len(lines) < 3:
-        lines.append("관련 내용을 링크에서 확인해 주세요.")
-    return lines[:3]
-
+    for p in banned_patterns:
+        line = re.sub(p, "", line).strip()
+    line = re.sub(r"\s+", " ", line).strip(" ,.;")
+    return line or "愿???댁슜??留곹겕?먯꽌 ?뺤씤??二쇱꽭??"
 
 def summarize_items_individually(
     api_key: str, models: List[str], items: List[NewsItem], date_str: str
 ) -> str:
     lines: List[str] = []
-    short_cache: dict[str, str] = {}
     for i, item in enumerate(items, start=1):
-        try:
-            prompt = build_single_item_prompt(item, i, date_str)
-            summary = summarize_with_gemini_any_model(api_key, prompt, models)
-            summary_lines = force_three_lines(summary)
-        except Exception as e:
-            print(f"[WARN] item summarize failed ({i}): {e}", file=sys.stderr)
-            summary_lines = [
-                "요약 생성에 실패했습니다.",
-                "아래 링크에서 원문을 확인해 주세요.",
-                "다음 기사부터는 정상 요약을 시도합니다.",
-            ]
+        # Title-only mode requested by user.
         lines.append(f"{i}. [{item.title}]")
-        lines.append("- Summary:")
-        lines.append(f"  1) {summary_lines[0]}")
-        lines.append(f"  2) {summary_lines[1]}")
-        lines.append(f"  3) {summary_lines[2]}")
-        if item.link not in short_cache:
-            short_cache[item.link] = shorten_link(item.link)
-        lines.append(f"- Link: {short_cache[item.link]}")
-        lines.append("")
     return "\n".join(lines).strip()
-
 
 def format_fallback(items: List[NewsItem], date_str: str, reason: str = "") -> str:
     lines = [f"[{date_str}] Today news 10 (summary failed, links only)"]
@@ -425,7 +384,7 @@ def parse_chat_ids() -> List[str]:
 def main() -> int:
     telegram_bot_token = getenv_required("TELEGRAM_BOT_TOKEN")
     telegram_chat_ids = parse_chat_ids()
-    gemini_api_key = getenv_required("GEMINI_API_KEY")
+    gemini_api_key = getenv_with_default("GEMINI_API_KEY", "")
 
     gemini_models_env = getenv_with_default(
         "GEMINI_MODELS",
@@ -484,36 +443,22 @@ def main() -> int:
     event_name = getenv_with_default("GITHUB_EVENT_NAME", "manual")
     trigger_name = "schedule" if event_name == "schedule" else "manual"
 
-    try:
-        available_models = list_gemini_models(gemini_api_key)
-        model_candidates = build_model_candidates(configured_models, available_models)
-        print(f"[INFO] Gemini model candidates: {', '.join(model_candidates[:8])}", file=sys.stderr)
-        general_summary_text = summarize_items_individually(
-            gemini_api_key, model_candidates, selected, date_str
-        )
-        sports_summary_text = (
-            summarize_items_individually(gemini_api_key, model_candidates, sports_selected, date_str)
-            if sports_selected
-            else "No sports news collected."
-        )
-        ent_summary_text = (
-            summarize_items_individually(gemini_api_key, model_candidates, ent_selected, date_str)
-            if ent_selected
-            else "No entertainment news collected."
-        )
-    except Exception as e:
-        print(f"[WARN] Gemini summarize failed: {e}", file=sys.stderr)
-        general_summary_text = format_fallback(selected, date_str, reason=str(e))
-        sports_summary_text = (
-            format_fallback(sports_selected, date_str, reason=str(e))
-            if sports_selected
-            else "No sports news collected."
-        )
-        ent_summary_text = (
-            format_fallback(ent_selected, date_str, reason=str(e))
-            if ent_selected
-            else "No entertainment news collected."
-        )
+    if gemini_api_key:
+        print("[INFO] GEMINI_API_KEY is set but summary mode is disabled (title-only mode).", file=sys.stderr)
+
+    general_summary_text = summarize_items_individually(
+        gemini_api_key, configured_models, selected, date_str
+    )
+    sports_summary_text = (
+        summarize_items_individually(gemini_api_key, configured_models, sports_selected, date_str)
+        if sports_selected
+        else "No sports news collected."
+    )
+    ent_summary_text = (
+        summarize_items_individually(gemini_api_key, configured_models, ent_selected, date_str)
+        if ent_selected
+        else "No entertainment news collected."
+    )
 
     header = (
         f"[{date_str}] Daily news summary\n"
@@ -544,3 +489,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
