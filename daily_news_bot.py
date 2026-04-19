@@ -12,6 +12,7 @@ Features:
 from __future__ import annotations
 
 import json
+import html
 import os
 import re
 import ssl
@@ -328,8 +329,10 @@ def summarize_items_individually(
 ) -> str:
     lines: List[str] = []
     for i, item in enumerate(items, start=1):
-        # Title-only mode requested by user.
-        lines.append(f"{i}. [{item.title}]")
+        # Title-only mode with clickable title link for Telegram HTML messages.
+        safe_title = html.escape(item.title, quote=True)
+        safe_link = html.escape(item.link, quote=True)
+        lines.append(f'{i}. <a href="{safe_link}">{safe_title}</a>')
     return "\n".join(lines).strip()
 
 def format_fallback(items: List[NewsItem], date_str: str, reason: str = "") -> str:
@@ -367,6 +370,7 @@ def telegram_send(token: str, chat_id: str, text: str) -> None:
     payload = {
         "chat_id": chat_id,
         "text": text,
+        "parse_mode": "HTML",
         "disable_web_page_preview": False,
     }
     _ = http_post_json(endpoint, payload, timeout=20)
