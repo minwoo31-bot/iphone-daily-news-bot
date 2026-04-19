@@ -330,6 +330,7 @@ def summarize_items_individually(
     for i, item in enumerate(items, start=1):
         short = shorten_link(item.link)
         lines.append(f"{i}. {item.title} ({short})")
+        lines.append("")
     return "\n".join(lines).strip()
 
 def format_fallback(items: List[NewsItem], date_str: str, reason: str = "") -> str:
