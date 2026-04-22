@@ -138,12 +138,18 @@ def parse_reg_dt_to_kst(reg_dt: str) -> Optional[datetime]:
         return None
 
 
+def _extract_response_header(data: dict) -> dict:
+    response = data.get("response", {})
+    header = response.get("header", {})
+    return header if isinstance(header, dict) else {}
+
+
 def fetch_recent_nara_notices(
     api_key: str,
     keywords: List[str],
     lookback_minutes: int,
     limit: int,
-) -> tuple[List[Notice], int, List[str]]:
+) -> tuple[List[Notice], int, List[str], List[str]]:
     endpoints = [
         "getBidPblancListInfoServcPPSSrch",   # 용역
         "getBidPblancListInfoThngPPSSrch",    # 물품
@@ -155,15 +161,24 @@ def fetch_recent_nara_notices(
     rows: List[Notice] = []
     total_seen = 0
     sample_titles: List[str] = []
+    debug_status: List[str] = []
+    now = datetime.now(KST)
+    # API sample spec uses YYYYMMDDHHMM format.
+    inqry_end = now.strftime("%Y%m%d%H%M")
+    inqry_bgn = (now - timedelta(minutes=max(lookback_minutes, 1440))).strftime("%Y%m%d%H%M")
     seen: set[str] = set()
 
     for ep in endpoints:
         url = (
             f"{base}/{ep}?serviceKey={urllib.parse.quote(api_key)}"
-            "&pageNo=1&numOfRows=80&type=json"
+            f"&pageNo=1&numOfRows=200&type=json&inqryDiv=1&inqryBgnDt={inqry_bgn}&inqryEndDt={inqry_end}"
         )
         try:
             data = json.loads(http_get(url, timeout=20).decode("utf-8", errors="replace"))
+            header = _extract_response_header(data)
+            result_code = str(header.get("resultCode", "")).strip()
+            result_msg = str(header.get("resultMsg", "")).strip()
+            debug_status.append(f"{ep}: code={result_code or 'N/A'}, msg={result_msg or 'N/A'}")
             items = _extract_items_from_bid_api(data)
             total_seen += len(items)
             for it in items:
@@ -198,10 +213,12 @@ def fetch_recent_nara_notices(
                 seen.add(key)
                 rows.append(Notice(title=title, link=link, reg_dt=reg_dt))
         except Exception as e:
+            err = f"{ep}: EXCEPTION {e}"
+            debug_status.append(err)
             print(f"[WARN] 나라장터 API failed ({ep}): {e}", file=sys.stderr)
 
     rows = rows[:limit]
-    return rows, total_seen, sample_titles
+    return rows, total_seen, sample_titles, debug_status
 
 
 def main() -> int:
@@ -221,7 +238,7 @@ def main() -> int:
         if x.strip()
     ]
 
-    notices, total_seen, sample_titles = fetch_recent_nara_notices(
+    notices, total_seen, sample_titles, debug_status = fetch_recent_nara_notices(
         api_key=api_key,
         keywords=keywords,
         lookback_minutes=lookback_minutes,
@@ -251,6 +268,11 @@ def main() -> int:
             lines.append("샘플 공고 제목(필터 전):")
             for i, t in enumerate(sample_titles, start=1):
                 lines.append(f"{i}. {t}")
+        if debug_status:
+            lines.append("")
+            lines.append("API 응답 상태:")
+            for s in debug_status:
+                lines.append(f"- {s}")
     text = "\n".join(lines).strip()
 
     for chat_id in chat_ids:
