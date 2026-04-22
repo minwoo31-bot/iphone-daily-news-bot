@@ -233,7 +233,7 @@ def main() -> int:
         x.strip()
         for x in getenv_with_default(
             "NARA_KEYWORDS",
-            "데이터,빅데이터,인공지능,AI,데이터플랫폼,데이터분석,데이터 구축",
+            "데이터,빅데이터,인공지능,AI,데이터플랫폼,데이터분석,데이터 구축,바우처",
         ).split(",")
         if x.strip()
     ]

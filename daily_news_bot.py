@@ -467,7 +467,7 @@ def main() -> int:
     nara_api_key = getenv_with_default("NARA_BID_API_KEY", "")
     nara_keywords_env = getenv_with_default(
         "NARA_KEYWORDS",
-        "데이터,빅데이터,인공지능,AI,데이터플랫폼,데이터분석,데이터 구축",
+        "데이터,빅데이터,인공지능,AI,데이터플랫폼,데이터분석,데이터 구축,바우처",
     )
     nara_keywords = [x.strip() for x in nara_keywords_env.split(",") if x.strip()]
     rss_feeds_env = getenv_with_default(
