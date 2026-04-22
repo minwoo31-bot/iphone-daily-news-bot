@@ -204,6 +204,8 @@ def main() -> int:
     api_key = getenv_required("NARA_BID_API_KEY")
     lookback_minutes = int(getenv_with_default("NARA_LOOKBACK_MIN", "10"))
     max_items = int(getenv_with_default("MAX_NARA_REALTIME", "10"))
+    event_name = getenv_with_default("GITHUB_EVENT_NAME", "manual")
+    trigger_name = "schedule" if event_name == "schedule" else "manual"
     keywords = [
         x.strip()
         for x in getenv_with_default(
@@ -219,15 +221,24 @@ def main() -> int:
         lookback_minutes=lookback_minutes,
         limit=max_items,
     )
-    if not notices:
+
+    now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
+    if not notices and trigger_name == "schedule":
         print("No recent NaraJangter notices. Skip send.")
         return 0
 
-    now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
-    lines = [f"[나라장터 실시간] {now}", f"- 최근 {lookback_minutes}분 데이터/빅데이터 공고 {len(notices)}건", ""]
-    for i, n in enumerate(notices, start=1):
-        lines.append(f"{i}. {n.title} ({shorten_link(n.link)})")
-        lines.append("")
+    lines = [
+        f"[나라장터 실시간] {now}",
+        f"- Trigger: {trigger_name}",
+        f"- 최근 {lookback_minutes}분 데이터/빅데이터 공고 {len(notices)}건",
+        "",
+    ]
+    if notices:
+        for i, n in enumerate(notices, start=1):
+            lines.append(f"{i}. {n.title} ({shorten_link(n.link)})")
+            lines.append("")
+    else:
+        lines.append("테스트 실행 결과: 조건에 맞는 공고가 없어 0건입니다.")
     text = "\n".join(lines).strip()
 
     for chat_id in chat_ids:
@@ -238,4 +249,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
