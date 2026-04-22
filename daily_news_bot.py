@@ -147,6 +147,74 @@ def parse_rss_feed(feed_url: str, max_items: int = 30) -> List[NewsItem]:
     return items
 
 
+def _extract_items_from_bid_api(data: dict) -> List[dict]:
+    response = data.get("response", {})
+    body = response.get("body", response)
+    items = body.get("items", {})
+    if isinstance(items, dict):
+        item = items.get("item", [])
+        if isinstance(item, list):
+            return item
+        if isinstance(item, dict):
+            return [item]
+    if isinstance(items, list):
+        return items
+    return []
+
+
+def fetch_nara_tenders(api_key: str, max_items: int = 10, keywords: Optional[List[str]] = None) -> List[NewsItem]:
+    if not api_key:
+        return []
+    if keywords is None:
+        keywords = ["데이터", "빅데이터", "인공지능", "AI", "데이터플랫폼"]
+
+    endpoints = [
+        "getBidPblancListInfoServcPPSSrch",   # 용역
+        "getBidPblancListInfoThngPPSSrch",    # 물품
+        "getBidPblancListInfoCnstwkPPSSrch",  # 공사
+    ]
+    base = "https://apis.data.go.kr/1230000/ad/BidPublicInfoService"
+
+    rows: List[NewsItem] = []
+    for ep in endpoints:
+        url = (
+            f"{base}/{ep}?serviceKey={urllib.parse.quote(api_key)}"
+            "&pageNo=1&numOfRows=50&type=json"
+        )
+        try:
+            raw = http_get(url, timeout=20)
+            data = json.loads(raw.decode("utf-8", errors="replace"))
+            items = _extract_items_from_bid_api(data)
+            for it in items:
+                title = str(it.get("bidNtceNm", "")).strip()
+                if not title:
+                    continue
+                title_lower = title.lower()
+                if not any(k.lower() in title_lower for k in keywords):
+                    continue
+                bid_no = str(it.get("bidNtceNo", "")).strip()
+                bid_ord = str(it.get("bidNtceOrd", "000")).strip() or "000"
+                detail = str(it.get("bidNtceDtlUrl", "")).strip()
+                link = detail
+                if not link and bid_no:
+                    link = (
+                        f"https://www.g2b.go.kr:8101/ep/tbid/tbidFwd.do?"
+                        f"bidno={urllib.parse.quote(bid_no)}&bidseq={urllib.parse.quote(bid_ord)}"
+                    )
+                rows.append(
+                    NewsItem(
+                        title=title,
+                        link=link or "https://www.g2b.go.kr/",
+                        source="나라장터",
+                        pub_date=str(it.get("rgstDt", "")).strip(),
+                    )
+                )
+        except Exception as e:
+            print(f"[WARN] 나라장터 API failed ({ep}): {e}", file=sys.stderr)
+
+    return unique_latest(rows, limit=max_items)
+
+
 def unique_latest(items: Iterable[NewsItem], limit: int) -> List[NewsItem]:
     seen_titles = set()
     seen_links = set()
@@ -395,6 +463,13 @@ def main() -> int:
     max_news = int(getenv_with_default("MAX_NEWS", "10"))
     max_sports = int(getenv_with_default("MAX_SPORTS", "10"))
     max_ent = int(getenv_with_default("MAX_ENTERTAINMENT", "10"))
+    max_nara = int(getenv_with_default("MAX_NARA", "10"))
+    nara_api_key = getenv_with_default("NARA_BID_API_KEY", "")
+    nara_keywords_env = getenv_with_default(
+        "NARA_KEYWORDS",
+        "데이터,빅데이터,인공지능,AI,데이터플랫폼,데이터분석,데이터 구축",
+    )
+    nara_keywords = [x.strip() for x in nara_keywords_env.split(",") if x.strip()]
     rss_feeds_env = getenv_with_default(
         "RSS_FEEDS",
         "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
@@ -438,6 +513,7 @@ def main() -> int:
     selected = unique_latest(collected, limit=max_news)
     sports_selected = unique_latest(sports_collected, limit=max_sports)
     ent_selected = unique_latest(ent_collected, limit=max_ent)
+    nara_selected = fetch_nara_tenders(nara_api_key, max_items=max_nara, keywords=nara_keywords)
     now_kst = datetime.now(KST)
     date_str = now_kst.strftime("%Y-%m-%d")
     run_time_kst = now_kst.strftime("%Y-%m-%d %H:%M:%S KST")
@@ -460,6 +536,11 @@ def main() -> int:
         if ent_selected
         else "No entertainment news collected."
     )
+    nara_summary_text = (
+        summarize_items_individually(gemini_api_key, configured_models, nara_selected, date_str)
+        if nara_selected
+        else "No 나라장터 data/bigdata notices found."
+    )
 
     header = (
         f"[{date_str}] Daily news summary\n"
@@ -468,6 +549,7 @@ def main() -> int:
         f"- General: {len(selected)} items\n"
         f"- Sports: {len(sports_selected)} items\n"
         f"- Entertainment/Broadcast: {len(ent_selected)} items\n"
+        f"- 나라장터(Data/BigData): {len(nara_selected)} items\n"
     )
     final_text = (
         f"{header}\n"
@@ -476,7 +558,9 @@ def main() -> int:
         "[SPORTS NEWS]\n"
         f"{sports_summary_text}\n\n"
         "[ENTERTAINMENT/BROADCAST NEWS]\n"
-        f"{ent_summary_text}"
+        f"{ent_summary_text}\n\n"
+        "[NARAJANGTER DATA/BIGDATA NOTICES]\n"
+        f"{nara_summary_text}"
     ).strip()
 
     for chat_id in telegram_chat_ids:
