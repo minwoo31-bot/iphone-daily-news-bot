@@ -32,8 +32,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_CHAT_IDS: ${{ vars.TELEGRAM_CHAT_IDS }}
           NARA_BID_API_KEY: ${{ secrets.NARA_BID_API_KEY }}
-          # Test mode: look back 24 hours so results are easier to verify.
-          NARA_LOOKBACK_MIN: "1440"
+          NARA_LOOKBACK_MIN: ${{ vars.NARA_LOOKBACK_MIN }}
           MAX_NARA_REALTIME: ${{ vars.MAX_NARA_REALTIME }}
           NARA_KEYWORDS: ${{ vars.NARA_KEYWORDS }}
         run: python nara_realtime_bot.py
