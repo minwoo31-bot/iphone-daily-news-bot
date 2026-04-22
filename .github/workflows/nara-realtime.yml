@@ -1,0 +1,39 @@
+name: NaraJangter Realtime Notices
+
+on:
+  schedule:
+    # every 5 minutes (near-real-time)
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: nara-realtime
+  cancel-in-progress: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Send near-real-time notices
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_IDS: ${{ vars.TELEGRAM_CHAT_IDS }}
+          NARA_BID_API_KEY: ${{ secrets.NARA_BID_API_KEY }}
+          NARA_LOOKBACK_MIN: ${{ vars.NARA_LOOKBACK_MIN }}
+          MAX_NARA_REALTIME: ${{ vars.MAX_NARA_REALTIME }}
+          NARA_KEYWORDS: ${{ vars.NARA_KEYWORDS }}
+        run: python nara_realtime_bot.py
+
