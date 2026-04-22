@@ -143,7 +143,7 @@ def fetch_recent_nara_notices(
     keywords: List[str],
     lookback_minutes: int,
     limit: int,
-) -> List[Notice]:
+) -> tuple[List[Notice], int, List[str]]:
     endpoints = [
         "getBidPblancListInfoServcPPSSrch",   # 용역
         "getBidPblancListInfoThngPPSSrch",    # 물품
@@ -153,6 +153,8 @@ def fetch_recent_nara_notices(
     now = datetime.now(KST)
     cutoff = now - timedelta(minutes=lookback_minutes)
     rows: List[Notice] = []
+    total_seen = 0
+    sample_titles: List[str] = []
     seen: set[str] = set()
 
     for ep in endpoints:
@@ -162,10 +164,14 @@ def fetch_recent_nara_notices(
         )
         try:
             data = json.loads(http_get(url, timeout=20).decode("utf-8", errors="replace"))
-            for it in _extract_items_from_bid_api(data):
+            items = _extract_items_from_bid_api(data)
+            total_seen += len(items)
+            for it in items:
                 title = str(it.get("bidNtceNm", "")).strip()
                 if not title:
                     continue
+                if len(sample_titles) < 5:
+                    sample_titles.append(title)
                 t_lower = title.lower()
                 if not any(k.lower() in t_lower for k in keywords):
                     continue
@@ -195,7 +201,7 @@ def fetch_recent_nara_notices(
             print(f"[WARN] 나라장터 API failed ({ep}): {e}", file=sys.stderr)
 
     rows = rows[:limit]
-    return rows
+    return rows, total_seen, sample_titles
 
 
 def main() -> int:
@@ -215,7 +221,7 @@ def main() -> int:
         if x.strip()
     ]
 
-    notices = fetch_recent_nara_notices(
+    notices, total_seen, sample_titles = fetch_recent_nara_notices(
         api_key=api_key,
         keywords=keywords,
         lookback_minutes=lookback_minutes,
@@ -230,6 +236,7 @@ def main() -> int:
     lines = [
         f"[나라장터 실시간] {now}",
         f"- Trigger: {trigger_name}",
+        f"- API fetched items: {total_seen}",
         f"- 최근 {lookback_minutes}분 데이터/빅데이터 공고 {len(notices)}건",
         "",
     ]
@@ -239,6 +246,11 @@ def main() -> int:
             lines.append("")
     else:
         lines.append("테스트 실행 결과: 조건에 맞는 공고가 없어 0건입니다.")
+        if sample_titles:
+            lines.append("")
+            lines.append("샘플 공고 제목(필터 전):")
+            for i, t in enumerate(sample_titles, start=1):
+                lines.append(f"{i}. {t}")
     text = "\n".join(lines).strip()
 
     for chat_id in chat_ids:
