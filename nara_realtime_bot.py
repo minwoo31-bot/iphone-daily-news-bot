@@ -21,12 +21,16 @@ from typing import List, Optional
 
 KST = timezone(timedelta(hours=9))
 
+SENT_IDS_FILE = "sent_ids.json"
+SENT_IDS_EXPIRY_DAYS = 7
+
 
 @dataclass
 class Notice:
     title: str
     link: str
     reg_dt: str
+    uid: str = ""
 
 
 def getenv_required(name: str) -> str:
@@ -100,6 +104,35 @@ def telegram_send(token: str, chat_id: str, text: str) -> None:
         "disable_web_page_preview": False,
     }
     _ = http_post_json(endpoint, payload, timeout=20)
+
+
+def load_sent_ids() -> dict:
+    """캐시 파일에서 기발송 공고 ID 로드."""
+    if not os.path.exists(SENT_IDS_FILE):
+        return {}
+    try:
+        with open(SENT_IDS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_sent_ids(sent: dict) -> None:
+    """기발송 공고 ID 저장 (7일 지난 항목 자동 삭제)."""
+    now = datetime.now(KST)
+    cutoff = now - timedelta(days=SENT_IDS_EXPIRY_DAYS)
+    pruned = {}
+    for k, v in sent.items():
+        try:
+            dt = datetime.fromisoformat(v)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=KST)
+            if dt >= cutoff:
+                pruned[k] = v
+        except Exception:
+            pruned[k] = v
+    with open(SENT_IDS_FILE, "w", encoding="utf-8") as f:
+        json.dump(pruned, f, ensure_ascii=False, indent=2)
 
 
 def _extract_items_from_bid_api(data: dict) -> List[dict]:
@@ -211,7 +244,8 @@ def fetch_recent_nara_notices(
                 if key in seen:
                     continue
                 seen.add(key)
-                rows.append(Notice(title=title, link=link, reg_dt=reg_dt))
+                uid = f"{bid_no}-{bid_ord}" if bid_no else link
+                rows.append(Notice(title=title, link=link, reg_dt=reg_dt, uid=uid))
         except Exception as e:
             err = f"{ep}: EXCEPTION {e}"
             debug_status.append(err)
@@ -225,7 +259,8 @@ def main() -> int:
     token = getenv_required("TELEGRAM_BOT_TOKEN")
     chat_ids = parse_chat_ids()
     api_key = getenv_required("NARA_BID_API_KEY")
-    lookback_minutes = int(getenv_with_default("NARA_LOOKBACK_MIN", "1440"))  # 테스트: 24시간으로 확대
+    sent_ids = load_sent_ids()
+    lookback_minutes = int(getenv_with_default("NARA_LOOKBACK_MIN", "10"))
     max_items = int(getenv_with_default("MAX_NARA_REALTIME", "10"))
     event_name = getenv_with_default("GITHUB_EVENT_NAME", "manual")
     trigger_name = "schedule" if event_name == "schedule" else "manual"
@@ -245,20 +280,23 @@ def main() -> int:
         limit=max_items,
     )
 
+    # 이미 발송된 공고 제외
+    new_notices = [n for n in notices if n.uid not in sent_ids]
+
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
-    if not notices and trigger_name == "schedule":
-        print("No recent NaraJangter notices. Skip send.")
+    if not new_notices and trigger_name == "schedule":
+        print(f"No new notices (matched={len(notices)}, already_sent={len(notices)-len(new_notices)}). Skip send.")
         return 0
 
     lines = [
         f"[나라장터 실시간] {now}",
         f"- Trigger: {trigger_name}",
         f"- API fetched items: {total_seen}",
-        f"- 최근 {lookback_minutes}분 데이터/빅데이터 공고 {len(notices)}건",
+        f"- 최근 {lookback_minutes}분 신규 공고 {len(new_notices)}건",
         "",
     ]
-    if notices:
-        for i, n in enumerate(notices, start=1):
+    if new_notices:
+        for i, n in enumerate(new_notices, start=1):
             lines.append(f"{i}. {n.title} ({shorten_link(n.link)})")
             lines.append("")
     else:
@@ -277,7 +315,15 @@ def main() -> int:
 
     for chat_id in chat_ids:
         telegram_send(token, chat_id, text)
-    print(f"Done: sent {len(notices)} notices.")
+
+    # 발송된 공고 ID 저장
+    if new_notices:
+        now_iso = datetime.now(KST).isoformat()
+        for n in new_notices:
+            sent_ids[n.uid] = now_iso
+        save_sent_ids(sent_ids)
+
+    print(f"Done: sent {len(new_notices)} notices.")
     return 0
 
 

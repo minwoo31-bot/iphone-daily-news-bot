@@ -26,6 +26,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Restore sent IDs cache
+        uses: actions/cache@v4
+        with:
+          path: sent_ids.json
+          key: nara-sent-ids-${{ github.run_id }}
+          restore-keys: |
+            nara-sent-ids-
+
       - name: Send near-real-time notices
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
