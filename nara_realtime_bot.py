@@ -225,7 +225,7 @@ def main() -> int:
     token = getenv_required("TELEGRAM_BOT_TOKEN")
     chat_ids = parse_chat_ids()
     api_key = getenv_required("NARA_BID_API_KEY")
-    lookback_minutes = int(getenv_with_default("NARA_LOOKBACK_MIN", "10"))
+    lookback_minutes = int(getenv_with_default("NARA_LOOKBACK_MIN", "1440"))  # 테스트: 24시간으로 확대
     max_items = int(getenv_with_default("MAX_NARA_REALTIME", "10"))
     event_name = getenv_with_default("GITHUB_EVENT_NAME", "manual")
     trigger_name = "schedule" if event_name == "schedule" else "manual"
