@@ -31,6 +31,7 @@ class Notice:
     link: str
     reg_dt: str
     uid: str = ""
+    dminstNm: str = ""
 
 
 def getenv_required(name: str) -> str:
@@ -180,6 +181,7 @@ def _extract_response_header(data: dict) -> dict:
 def fetch_recent_nara_notices(
     api_key: str,
     keywords: List[str],
+    inst_filters: List[str],
     lookback_minutes: int,
     limit: int,
 ) -> tuple[List[Notice], int, List[str], List[str]]:
@@ -221,7 +223,10 @@ def fetch_recent_nara_notices(
                 if len(sample_titles) < 5:
                     sample_titles.append(title)
                 t_lower = title.lower()
-                if not any(k.lower() in t_lower for k in keywords):
+                dminstNm = str(it.get("dminstNm", "")).strip()
+                keyword_match = any(k.lower() in t_lower for k in keywords)
+                inst_match = any(f in dminstNm for f in inst_filters) if inst_filters else False
+                if not keyword_match and not inst_match:
                     continue
                 reg_dt = str(it.get("rgstDt", "")).strip()
                 reg_ts = parse_reg_dt_to_kst(reg_dt)
@@ -245,7 +250,7 @@ def fetch_recent_nara_notices(
                     continue
                 seen.add(key)
                 uid = f"{bid_no}-{bid_ord}" if bid_no else link
-                rows.append(Notice(title=title, link=link, reg_dt=reg_dt, uid=uid))
+                rows.append(Notice(title=title, link=link, reg_dt=reg_dt, uid=uid, dminstNm=dminstNm))
         except Exception as e:
             err = f"{ep}: EXCEPTION {e}"
             debug_status.append(err)
@@ -272,10 +277,16 @@ def main() -> int:
         ).split(",")
         if x.strip()
     ]
+    inst_filters = [
+        x.strip()
+        for x in getenv_with_default("NARA_INST_FILTER", "울산연구원").split(",")
+        if x.strip()
+    ]
 
     notices, total_seen, sample_titles, debug_status = fetch_recent_nara_notices(
         api_key=api_key,
         keywords=keywords,
+        inst_filters=inst_filters,
         lookback_minutes=lookback_minutes,
         limit=max_items,
     )
@@ -297,7 +308,8 @@ def main() -> int:
     ]
     if new_notices:
         for i, n in enumerate(new_notices, start=1):
-            lines.append(f"{i}. {n.title} ({shorten_link(n.link)})")
+            inst_label = f"[{n.dminstNm}] " if n.dminstNm else ""
+            lines.append(f"{i}. {inst_label}{n.title} ({shorten_link(n.link)})")
             lines.append("")
     else:
         lines.append("테스트 실행 결과: 조건에 맞는 공고가 없어 0건입니다.")

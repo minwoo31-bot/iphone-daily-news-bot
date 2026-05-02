@@ -43,4 +43,5 @@ jobs:
           NARA_LOOKBACK_MIN: ${{ vars.NARA_LOOKBACK_MIN }}
           MAX_NARA_REALTIME: ${{ vars.MAX_NARA_REALTIME }}
           NARA_KEYWORDS: ${{ vars.NARA_KEYWORDS }}
+          NARA_INST_FILTER: ${{ vars.NARA_INST_FILTER }}
         run: python nara_realtime_bot.py
