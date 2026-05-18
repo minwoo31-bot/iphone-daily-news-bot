@@ -192,7 +192,11 @@ def fetch_recent_nara_notices(
     ]
     base = "https://apis.data.go.kr/1230000/ad/BidPublicInfoService"
     now = datetime.now(KST)
-    cutoff = now - timedelta(minutes=lookback_minutes)
+    # cutoff는 API 쿼리 범위와 동일하게 24시간으로 설정.
+    # 실행 간격이 최대 수 시간이므로 lookback_minutes(90분)로 자르면
+    # 실행 사이에 올라온 공고가 영구 누락됨. 중복 방지는 sent_ids 캐시가 담당.
+    api_window_minutes = max(lookback_minutes, 1440)
+    cutoff = now - timedelta(minutes=api_window_minutes)
     rows: List[Notice] = []
     total_seen = 0
     sample_titles: List[str] = []
@@ -200,7 +204,7 @@ def fetch_recent_nara_notices(
     now = datetime.now(KST)
     # API sample spec uses YYYYMMDDHHMM format.
     inqry_end = now.strftime("%Y%m%d%H%M")
-    inqry_bgn = (now - timedelta(minutes=max(lookback_minutes, 1440))).strftime("%Y%m%d%H%M")
+    inqry_bgn = (now - timedelta(minutes=api_window_minutes)).strftime("%Y%m%d%H%M")
     seen: set[str] = set()
 
     for ep in endpoints:
