@@ -2,7 +2,7 @@ name: NaraJangter Realtime Notices
 
 on:
   schedule:
-    # every 5 minutes (near-real-time)
+    # GitHub Actions throttles this to ~1 hour on inactive repos
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
@@ -40,7 +40,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_CHAT_IDS: ${{ vars.TELEGRAM_CHAT_IDS }}
           NARA_BID_API_KEY: ${{ secrets.NARA_BID_API_KEY }}
-          NARA_LOOKBACK_MIN: ${{ vars.NARA_LOOKBACK_MIN }}
+          NARA_LOOKBACK_MIN: ${{ vars.NARA_LOOKBACK_MIN || '90' }}
           MAX_NARA_REALTIME: ${{ vars.MAX_NARA_REALTIME }}
           NARA_KEYWORDS: ${{ vars.NARA_KEYWORDS }}
           NARA_INST_FILTER: ${{ vars.NARA_INST_FILTER }}
