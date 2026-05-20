@@ -104,18 +104,48 @@ def normalize_link(link: str) -> str:
 
 
 def shorten_link(link: str) -> str:
-    encoded = urllib.parse.quote(link, safe="")
-    providers = [
-        f"https://is.gd/create.php?format=simple&url={encoded}",
-        f"https://tinyurl.com/api-create.php?url={encoded}",
-    ]
-    for url in providers:
-        try:
-            short = http_get(url, timeout=10).decode("utf-8", errors="replace").strip()
+    # 1. da.gd (GET, plain text)
+    try:
+        encoded = urllib.parse.quote(link, safe="")
+        url = f"https://da.gd/s?url={encoded}"
+        short = http_get(url, timeout=8).decode("utf-8", errors="replace").strip()
+        if short.startswith("http://") or short.startswith("https://"):
+            return short
+    except Exception:
+        pass
+
+    # 2. cleanuri.com (POST, JSON)
+    try:
+        url = "https://cleanuri.com/api/v1/shorten"
+        data = urllib.parse.urlencode({"url": link}).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "daily-news-bot/1.0 (+telegram digest)",
+            },
+            method="POST",
+        )
+        ctx = ssl.create_default_context()
+        with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+            short = res.get("result_url", "").strip()
             if short.startswith("http://") or short.startswith("https://"):
                 return short
-        except Exception:
-            continue
+    except Exception:
+        pass
+
+    # 3. is.gd (GET, plain text)
+    try:
+        encoded = urllib.parse.quote(link, safe="")
+        url = f"https://is.gd/create.php?format=simple&url={encoded}"
+        short = http_get(url, timeout=8).decode("utf-8", errors="replace").strip()
+        if short.startswith("http://") or short.startswith("https://"):
+            return short
+    except Exception:
+        pass
+
     return link
 
 
@@ -266,7 +296,7 @@ def build_single_item_prompt(item: NewsItem, index: int, date_str: str) -> str:
             "Do not include numbering or bullet symbols.",
             "Focus only on the most important facts, changes, impacts, and numbers.",
             "Do not mention who announced/reported it or where it was reported.",
-            "Avoid expressions like 諛쒗몴?덈떎, 蹂대룄?덈떎, ?꾪뻽?? 諛앺삍??",
+            "Avoid expressions like 발표했다, 보도했다, 전했다, 밝혔다",
             "",
             f"Index: {index}",
             f"Title: {item.title}",
@@ -377,19 +407,19 @@ def force_single_line(text: str) -> str:
     raw_lines = [ln.strip(" -\t") for ln in text.splitlines() if ln.strip()]
     merged = " ".join(raw_lines).strip()
     if not merged:
-        return "?붿빟???앹꽦?섏? 紐삵뻽?듬땲??"
+        return "요약을 생성하지 못했습니다."
 
-    chunks = [c.strip() for c in re.split(r"(?<=[.!?])\s+|(?<=[?ㅼ슂])\s+", merged) if c.strip()]
+    chunks = [c.strip() for c in re.split(r"(?<=[.!?])\s+|(?<=다)\s+", merged) if c.strip()]
     line = chunks[0] if chunks else merged
     # Drop low-signal reporting verbs if they leaked into output.
     banned_patterns = [
-        r"\b(諛쒗몴?덈떎|蹂대룄?덈떎|?꾪뻽??諛앺삍??\b",
-        r"(???곕Ⅴ硫????섑븯硫?",
+        r"\b(발표했다|보도했다|전했다|밝혔다)\b",
+        r"(에 따르면|에 의하면)",
     ]
     for p in banned_patterns:
         line = re.sub(p, "", line).strip()
     line = re.sub(r"\s+", " ", line).strip(" ,.;")
-    return line or "愿???댁슜??留곹겕?먯꽌 ?뺤씤??二쇱꽭??"
+    return line or "관련 내용은 링크에서 확인해 주세요."
 
 def summarize_items_individually(
     api_key: str, models: List[str], items: List[NewsItem], date_str: str
@@ -397,7 +427,20 @@ def summarize_items_individually(
     lines: List[str] = []
     for i, item in enumerate(items, start=1):
         short = shorten_link(item.link)
-        lines.append(f"{i}. {item.title} ({short})")
+        summary = ""
+        if api_key:
+            try:
+                prompt = build_single_item_prompt(item, i, date_str)
+                raw_summary = summarize_with_gemini_any_model(api_key, prompt, models)
+                summary = force_single_line(raw_summary)
+            except Exception as e:
+                print(f"[WARN] Failed to summarize item {i}: {e}", file=sys.stderr)
+        
+        if summary:
+            lines.append(f"{i}. {item.title} ({short})")
+            lines.append(f"   - 요약: {summary}")
+        else:
+            lines.append(f"{i}. {item.title} ({short})")
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -521,7 +564,9 @@ def main() -> int:
     trigger_name = "schedule" if event_name == "schedule" else "manual"
 
     if gemini_api_key:
-        print("[INFO] GEMINI_API_KEY is set but summary mode is disabled (title-only mode).", file=sys.stderr)
+        print("[INFO] GEMINI_API_KEY is set. Summarizing news using Gemini...", file=sys.stderr)
+    else:
+        print("[INFO] GEMINI_API_KEY is not set. Operating in title-only fallback mode.", file=sys.stderr)
 
     general_summary_text = summarize_items_individually(
         gemini_api_key, configured_models, selected, date_str

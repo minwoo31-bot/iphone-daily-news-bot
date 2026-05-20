@@ -73,18 +73,48 @@ def http_post_json(url: str, data: dict, timeout: int = 20) -> dict:
 
 
 def shorten_link(link: str) -> str:
-    encoded = urllib.parse.quote(link, safe="")
-    providers = [
-        f"https://is.gd/create.php?format=simple&url={encoded}",
-        f"https://tinyurl.com/api-create.php?url={encoded}",
-    ]
-    for url in providers:
-        try:
-            short = http_get(url, timeout=10).decode("utf-8", errors="replace").strip()
+    # 1. da.gd (GET, plain text)
+    try:
+        encoded = urllib.parse.quote(link, safe="")
+        url = f"https://da.gd/s?url={encoded}"
+        short = http_get(url, timeout=8).decode("utf-8", errors="replace").strip()
+        if short.startswith("http://") or short.startswith("https://"):
+            return short
+    except Exception:
+        pass
+
+    # 2. cleanuri.com (POST, JSON)
+    try:
+        url = "https://cleanuri.com/api/v1/shorten"
+        data = urllib.parse.urlencode({"url": link}).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "nara-realtime-bot/1.0",
+            },
+            method="POST",
+        )
+        ctx = ssl.create_default_context()
+        with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+            short = res.get("result_url", "").strip()
             if short.startswith("http://") or short.startswith("https://"):
                 return short
-        except Exception:
-            continue
+    except Exception:
+        pass
+
+    # 3. is.gd (GET, plain text)
+    try:
+        encoded = urllib.parse.quote(link, safe="")
+        url = f"https://is.gd/create.php?format=simple&url={encoded}"
+        short = http_get(url, timeout=8).decode("utf-8", errors="replace").strip()
+        if short.startswith("http://") or short.startswith("https://"):
+            return short
+    except Exception:
+        pass
+
     return link
 
 
