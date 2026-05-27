@@ -310,9 +310,12 @@ def _prespec_bases() -> List[str]:
     env = os.getenv("NARA_PRESPEC_BASE", "").strip()
     if env:
         return [env.rstrip("/")]
+    # 게이트웨이 경로 prefix가 서비스마다 다름. 입찰공고는 'ad/'이지만 사전규격은
+    # g2b nopenapi에서 'ao/'를 사용하는 것으로 확인됨 → 'ao/' 우선 시도.
     return [
-        "https://apis.data.go.kr/1230000/ad/HrcspSsstndrdInfoService",
+        "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService",
         "https://apis.data.go.kr/1230000/HrcspSsstndrdInfoService",
+        "https://apis.data.go.kr/1230000/ad/HrcspSsstndrdInfoService",
     ]
 
 
@@ -348,6 +351,8 @@ def fetch_recent_nara_prespec(
     for ep in PRESPEC_ENDPOINTS:
         candidate_bases = [working_base] if working_base else bases
         for base in candidate_bases:
+            seg = base.rsplit("/1230000/", 1)[-1]
+            prefix = seg.split("/")[0] if "/" in seg else "(none)"
             url = (
                 f"{base}/{ep}?serviceKey={urllib.parse.quote(api_key)}"
                 f"&pageNo=1&numOfRows=200&type=json&inqryDiv=1&inqryBgnDt={inqry_bgn}&inqryEndDt={inqry_end}"
@@ -357,13 +362,13 @@ def fetch_recent_nara_prespec(
             except Exception as e:
                 # 잘못된 베이스 URL은 보통 HTML(404)을 반환해 JSON 파싱에서 실패.
                 # 다음 후보 베이스로 넘어감.
-                debug_status.append(f"{ep}: EXCEPTION {e}")
+                debug_status.append(f"{ep}[{prefix}]: EXCEPTION {e}")
                 continue
 
             header = _extract_response_header(data)
             result_code = str(header.get("resultCode", "")).strip()
             result_msg = str(header.get("resultMsg", "")).strip()
-            debug_status.append(f"{ep}: code={result_code or 'N/A'}, msg={result_msg or 'N/A'}")
+            debug_status.append(f"{ep}[{prefix}]: code={result_code or 'N/A'}, msg={result_msg or 'N/A'}")
             # 정상 JSON 응답을 받은 베이스를 이후 모든 오퍼레이션에 재사용.
             if working_base is None:
                 working_base = base
