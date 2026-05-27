@@ -32,6 +32,8 @@ class Notice:
     reg_dt: str
     uid: str = ""
     dminstNm: str = ""
+    budget: str = ""        # 사전규격 배정예산액
+    opinion_close: str = "" # 사전규격 의견등록마감일시
 
 
 def getenv_required(name: str) -> str:
@@ -294,6 +296,194 @@ def fetch_recent_nara_notices(
     return rows, total_seen, sample_titles, debug_status
 
 
+PRESPEC_ENDPOINTS = [
+    "getPublicPrcureThngInfoServc",   # 용역
+    "getPublicPrcureThngInfoThng",    # 물품
+    "getPublicPrcureThngInfoCnstwk",  # 공사
+]
+
+
+def _prespec_bases() -> List[str]:
+    # 환경변수로 베이스 URL을 강제할 수 있게 함. 미설정 시 gateway 경로 후보를
+    # 순서대로 시도(첫 응답이 정상 JSON이면 그 베이스로 고정). 입찰공고 서비스가
+    # 'ad/' prefix를 쓰므로 사전규격도 동일 prefix를 우선 시도.
+    env = os.getenv("NARA_PRESPEC_BASE", "").strip()
+    if env:
+        return [env.rstrip("/")]
+    return [
+        "https://apis.data.go.kr/1230000/ad/HrcspSsstndrdInfoService",
+        "https://apis.data.go.kr/1230000/HrcspSsstndrdInfoService",
+    ]
+
+
+def _first_nonempty(it: dict, keys: List[str]) -> str:
+    for k in keys:
+        v = str(it.get(k, "")).strip()
+        if v:
+            return v
+    return ""
+
+
+def fetch_recent_nara_prespec(
+    api_key: str,
+    keywords: List[str],
+    inst_filters: List[str],
+    lookback_minutes: int,
+    limit: int,
+) -> tuple[List[Notice], int, List[str], List[str]]:
+    bases = _prespec_bases()
+    now = datetime.now(KST)
+    api_window_minutes = max(lookback_minutes, 1440)
+    cutoff = now - timedelta(minutes=api_window_minutes)
+    inqry_end = now.strftime("%Y%m%d%H%M")
+    inqry_bgn = (now - timedelta(minutes=api_window_minutes)).strftime("%Y%m%d%H%M")
+
+    rows: List[Notice] = []
+    total_seen = 0
+    sample_titles: List[str] = []
+    debug_status: List[str] = []
+    seen: set[str] = set()
+    working_base: Optional[str] = None
+
+    for ep in PRESPEC_ENDPOINTS:
+        candidate_bases = [working_base] if working_base else bases
+        for base in candidate_bases:
+            url = (
+                f"{base}/{ep}?serviceKey={urllib.parse.quote(api_key)}"
+                f"&pageNo=1&numOfRows=200&type=json&inqryDiv=1&inqryBgnDt={inqry_bgn}&inqryEndDt={inqry_end}"
+            )
+            try:
+                data = json.loads(http_get(url, timeout=20).decode("utf-8", errors="replace"))
+            except Exception as e:
+                # 잘못된 베이스 URL은 보통 HTML(404)을 반환해 JSON 파싱에서 실패.
+                # 다음 후보 베이스로 넘어감.
+                debug_status.append(f"{ep}: EXCEPTION {e}")
+                continue
+
+            header = _extract_response_header(data)
+            result_code = str(header.get("resultCode", "")).strip()
+            result_msg = str(header.get("resultMsg", "")).strip()
+            debug_status.append(f"{ep}: code={result_code or 'N/A'}, msg={result_msg or 'N/A'}")
+            # 정상 JSON 응답을 받은 베이스를 이후 모든 오퍼레이션에 재사용.
+            if working_base is None:
+                working_base = base
+
+            items = _extract_items_from_bid_api(data)
+            total_seen += len(items)
+            for it in items:
+                title = _first_nonempty(it, ["prdctClsfcNoNm", "bfSpecNm", "refNoNm"])
+                if not title:
+                    continue
+                if len(sample_titles) < 5:
+                    sample_titles.append(title)
+                t_lower = title.lower()
+                dminstNm = _first_nonempty(
+                    it, ["rlDminsttNm", "dminsttNm", "orderInsttNm", "corpNm"]
+                )
+                keyword_match = any(k.lower() in t_lower for k in keywords)
+                inst_match = any(f in dminstNm for f in inst_filters) if inst_filters else False
+                if not keyword_match and not inst_match:
+                    continue
+
+                reg_dt = _first_nonempty(it, ["rgstDt", "bfSpecRgstDt"])
+                reg_ts = parse_reg_dt_to_kst(reg_dt)
+                if reg_ts is not None and reg_ts < cutoff:
+                    continue
+
+                spec_no = _first_nonempty(it, ["bfSpecRgstNo", "refNo"])
+                link = _first_nonempty(it, ["specDocFileUrl1"])
+                if not link:
+                    link = "https://www.g2b.go.kr/bs/beffatStndrdSearchSrch.do"
+
+                budget = _first_nonempty(it, ["asignBdgtAmt", "budgetAmount"])
+                opinion_close = _first_nonempty(it, ["opninRgstClseDt", "opninRgstClsDt"])
+
+                key = f"{title}|{spec_no}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                uid = f"prespec:{spec_no}" if spec_no else f"prespec:{title}"
+                rows.append(
+                    Notice(
+                        title=title,
+                        link=link,
+                        reg_dt=reg_dt,
+                        uid=uid,
+                        dminstNm=dminstNm,
+                        budget=budget,
+                        opinion_close=opinion_close,
+                    )
+                )
+            break  # 이 오퍼레이션은 정상 처리됨 → 다른 후보 베이스 시도 안 함
+
+    rows = rows[:limit]
+    return rows, total_seen, sample_titles, debug_status
+
+
+def _fmt_dt(raw: str) -> str:
+    raw = (raw or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) >= 12:
+        return f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]} {digits[8:10]}:{digits[10:12]}"
+    return raw
+
+
+def _fmt_budget(raw: str) -> str:
+    raw = (raw or "").strip()
+    try:
+        amount = int(float(raw))
+        return f"{amount:,}원"
+    except (ValueError, TypeError):
+        return raw
+
+
+def build_message(
+    label: str,
+    notices: List[Notice],
+    total_seen: int,
+    sample_titles: List[str],
+    debug_status: List[str],
+    lookback_minutes: int,
+    trigger_name: str,
+    now_str: str,
+    is_prespec: bool,
+) -> str:
+    unit = "사전규격" if is_prespec else "공고"
+    lines = [
+        f"[{label}] {now_str}",
+        f"- Trigger: {trigger_name}",
+        f"- API fetched items: {total_seen}",
+        f"- 최근 {lookback_minutes}분 신규 {unit} {len(notices)}건",
+        "",
+    ]
+    if notices:
+        for i, n in enumerate(notices, start=1):
+            inst_label = f"[{n.dminstNm}] " if n.dminstNm else ""
+            lines.append(f"{i}. {inst_label}{n.title} ({shorten_link(n.link)})")
+            if is_prespec:
+                extras = []
+                if n.budget:
+                    extras.append(f"예산 {_fmt_budget(n.budget)}")
+                if n.opinion_close:
+                    extras.append(f"의견마감 {_fmt_dt(n.opinion_close)}")
+                if extras:
+                    lines.append("   " + " | ".join(extras))
+            lines.append("")
+    else:
+        lines.append(f"테스트 실행 결과: 조건에 맞는 {unit}이(가) 없어 0건입니다.")
+        if sample_titles:
+            lines.append("")
+            lines.append(f"샘플 {unit} 제목(필터 전):")
+            for i, t in enumerate(sample_titles, start=1):
+                lines.append(f"{i}. {t}")
+        if debug_status:
+            lines.append("")
+            lines.append("API 응답 상태:")
+            for s in debug_status:
+                lines.append(f"- {s}")
+    return "\n".join(lines).strip()
+
+
 def main() -> int:
     token = getenv_required("TELEGRAM_BOT_TOKEN")
     chat_ids = parse_chat_ids()
@@ -317,6 +507,10 @@ def main() -> int:
         if x.strip()
     ]
 
+    now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
+    newly_sent: List[Notice] = []
+
+    # 1) 입찰공고(실공고)
     notices, total_seen, sample_titles, debug_status = fetch_recent_nara_notices(
         api_key=api_key,
         keywords=keywords,
@@ -324,52 +518,60 @@ def main() -> int:
         lookback_minutes=lookback_minutes,
         limit=max_items,
     )
-
-    # 이미 발송된 공고 제외
     new_notices = [n for n in notices if n.uid not in sent_ids]
-
-    now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
-    if not new_notices and trigger_name == "schedule":
-        print(f"No new notices (matched={len(notices)}, already_sent={len(notices)-len(new_notices)}). Skip send.")
-        return 0
-
-    lines = [
-        f"[나라장터 실시간] {now}",
-        f"- Trigger: {trigger_name}",
-        f"- API fetched items: {total_seen}",
-        f"- 최근 {lookback_minutes}분 신규 공고 {len(new_notices)}건",
-        "",
-    ]
-    if new_notices:
-        for i, n in enumerate(new_notices, start=1):
-            inst_label = f"[{n.dminstNm}] " if n.dminstNm else ""
-            lines.append(f"{i}. {inst_label}{n.title} ({shorten_link(n.link)})")
-            lines.append("")
+    if new_notices or trigger_name != "schedule":
+        text = build_message(
+            label="나라장터 실시간",
+            notices=new_notices,
+            total_seen=total_seen,
+            sample_titles=sample_titles,
+            debug_status=debug_status,
+            lookback_minutes=lookback_minutes,
+            trigger_name=trigger_name,
+            now_str=now_str,
+            is_prespec=False,
+        )
+        for chat_id in chat_ids:
+            telegram_send(token, chat_id, text)
+        newly_sent.extend(new_notices)
     else:
-        lines.append("테스트 실행 결과: 조건에 맞는 공고가 없어 0건입니다.")
-        if sample_titles:
-            lines.append("")
-            lines.append("샘플 공고 제목(필터 전):")
-            for i, t in enumerate(sample_titles, start=1):
-                lines.append(f"{i}. {t}")
-        if debug_status:
-            lines.append("")
-            lines.append("API 응답 상태:")
-            for s in debug_status:
-                lines.append(f"- {s}")
-    text = "\n".join(lines).strip()
+        print(f"No new bid notices (matched={len(notices)}). Skip bid send.")
 
-    for chat_id in chat_ids:
-        telegram_send(token, chat_id, text)
+    # 2) 사전규격 (별도 메시지)
+    pre_notices, pre_total, pre_samples, pre_debug = fetch_recent_nara_prespec(
+        api_key=api_key,
+        keywords=keywords,
+        inst_filters=inst_filters,
+        lookback_minutes=lookback_minutes,
+        limit=max_items,
+    )
+    new_pre = [n for n in pre_notices if n.uid not in sent_ids]
+    if new_pre or trigger_name != "schedule":
+        text = build_message(
+            label="나라장터 사전규격",
+            notices=new_pre,
+            total_seen=pre_total,
+            sample_titles=pre_samples,
+            debug_status=pre_debug,
+            lookback_minutes=lookback_minutes,
+            trigger_name=trigger_name,
+            now_str=now_str,
+            is_prespec=True,
+        )
+        for chat_id in chat_ids:
+            telegram_send(token, chat_id, text)
+        newly_sent.extend(new_pre)
+    else:
+        print(f"No new pre-spec (matched={len(pre_notices)}). Skip pre-spec send.")
 
-    # 발송된 공고 ID 저장
-    if new_notices:
+    # 발송된 항목 ID 저장 (입찰공고 + 사전규격)
+    if newly_sent:
         now_iso = datetime.now(KST).isoformat()
-        for n in new_notices:
+        for n in newly_sent:
             sent_ids[n.uid] = now_iso
         save_sent_ids(sent_ids)
 
-    print(f"Done: sent {len(new_notices)} notices.")
+    print(f"Done: sent {len(new_notices)} bid + {len(new_pre)} pre-spec notices.")
     return 0
 
 
