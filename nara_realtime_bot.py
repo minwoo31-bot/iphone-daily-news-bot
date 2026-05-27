@@ -310,13 +310,9 @@ def _prespec_bases() -> List[str]:
     env = os.getenv("NARA_PRESPEC_BASE", "").strip()
     if env:
         return [env.rstrip("/")]
-    # 게이트웨이 경로 prefix가 서비스마다 다름. 입찰공고는 'ad/'이지만 사전규격은
-    # g2b nopenapi에서 'ao/'를 사용하는 것으로 확인됨 → 'ao/' 우선 시도.
-    return [
-        "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService",
-        "https://apis.data.go.kr/1230000/HrcspSsstndrdInfoService",
-        "https://apis.data.go.kr/1230000/ad/HrcspSsstndrdInfoService",
-    ]
+    # 게이트웨이 경로 prefix는 서비스마다 다름. 입찰공고는 'ad/'이지만 사전규격은
+    # 'ao/'가 정상 경로로 확인됨(ad/=404, prefix없음=500, ao/=403=경로존재).
+    return ["https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService"]
 
 
 def _first_nonempty(it: dict, keys: List[str]) -> str:
