@@ -40,6 +40,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_CHAT_IDS: ${{ vars.TELEGRAM_CHAT_IDS }}
           NARA_BID_API_KEY: ${{ secrets.NARA_BID_API_KEY }}
+          NARA_PRESPEC_API_KEY: ${{ secrets.NARA_PRESPEC_API_KEY }}
           NARA_LOOKBACK_MIN: ${{ vars.NARA_LOOKBACK_MIN || '90' }}
           MAX_NARA_REALTIME: ${{ vars.MAX_NARA_REALTIME }}
           NARA_KEYWORDS: ${{ vars.NARA_KEYWORDS }}

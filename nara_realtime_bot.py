@@ -539,8 +539,11 @@ def main() -> int:
         print(f"No new bid notices (matched={len(notices)}). Skip bid send.")
 
     # 2) 사전규격 (별도 메시지)
+    # 사전규격 서비스에 별도 인증키를 받은 경우 NARA_PRESPEC_API_KEY 사용,
+    # 없으면 입찰공고와 동일 키 사용(같은 계정이면 키 공유됨).
+    prespec_api_key = getenv_with_default("NARA_PRESPEC_API_KEY", api_key)
     pre_notices, pre_total, pre_samples, pre_debug = fetch_recent_nara_prespec(
-        api_key=api_key,
+        api_key=prespec_api_key,
         keywords=keywords,
         inst_filters=inst_filters,
         lookback_minutes=lookback_minutes,
